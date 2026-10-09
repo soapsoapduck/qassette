@@ -1,8 +1,12 @@
-"""Decode amplitude vectors back into audio."""
+"""Decode amplitude vectors (or .qbits tapes) back into audio."""
+
+from pathlib import Path
 
 import numpy as np
 
 from .audio_io import overlap_add
+from .formats import load_qbits
+from .readout import estimate_homodyne, estimate_z
 
 
 def frames_to_audio(
@@ -20,3 +24,19 @@ def frames_to_audio(
         [np.asarray(a, dtype=np.float64) * n for a, n in zip(amplitudes_list, norms, strict=True)]
     )
     return overlap_add(frames, hop=hop, length=length)
+
+
+def decode_qbits(path: str | Path) -> np.ndarray:
+    """Reconstruct a waveform using ONLY a .qbits file.
+
+    Estimates each frame's amplitude vector from its stored shot outcomes
+    (signed for homodyne, magnitudes only for z), rescales by the stored
+    norms, and overlap-adds. Sample rate is available in the file header
+    via formats.load_qbits.
+    """
+    qb = load_qbits(path)
+    h = qb.header
+    N = h["N"]
+    estimate = estimate_homodyne if h["mode"] == "homodyne" else estimate_z
+    amps = [estimate(row, N) for row in qb.outcomes]
+    return frames_to_audio(amps, h["norms"], hop=h["hop"], length=h["length"])
