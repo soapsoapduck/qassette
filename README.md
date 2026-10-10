@@ -43,6 +43,9 @@ qassette bits song.qbits --frame 10 --max-shots 32
 # all three steps + fidelity metrics; --keep-files keeps the intermediates
 qassette roundtrip samples\sine_440hz_2s.wav -o out.wav --shots 4096 --readout homodyne --keep-files
 
+# quantum effects: phase gates acting on the spectrum between QFT and IQFT
+qassette roundtrip samples\a_major_chord_2s.wav -o fx.wav --shots 65536 --fx "delay:64,chirp:4,ringmod:16"
+
 # measure in the frequency basis (right after the QFT) ...
 qassette measure song.qtape -o song_freq.qbits --shots 4096 --readout z --basis freq
 

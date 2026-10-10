@@ -8,7 +8,7 @@ import typer
 
 from .audio_io import frame_signal, load_audio, save_audio
 from .decode import decode_qbits, frames_to_audio
-from .effects import build_fx_circuit, chain_names
+from .effects import build_fx_circuit, chain_names, parse_fx
 from .encode import encode_frame
 from .formats import FORMAT_VERSION, Qbits, load_qbits, load_qtape, save_qbits, save_qtape, to_ascii
 from .readout import read_exact, sample_homodyne, sample_z
@@ -35,17 +35,21 @@ def encode(
     n: int = typer.Option(256, "--frame-size", "-N", help="frame size (power of two)"),
     hop: int = typer.Option(128, help="hop size"),
     sr: int = typer.Option(16000, help="sample rate to load at"),
+    fx: str = typer.Option("", "--fx", help='effect chain, e.g. "delay:3,chirp:0.5,ringmod:4"'),
 ) -> None:
     """Encode a WAV into a .qtape of per-frame quantum circuits."""
     t0 = time.perf_counter()
     x = load_audio(in_wav, sr)
     frames = frame_signal(x, N=n, hop=hop)
-    chain = ()  # effect-chain slot: QFT -> chain -> IQFT, identity when empty
-    fx = build_fx_circuit(n.bit_length() - 1, chain)
+    try:
+        chain = parse_fx(fx, n.bit_length() - 1)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+    fx_circuit = build_fx_circuit(n.bit_length() - 1, chain)
     circuits, norms = [], []
     with typer.progressbar(frames, label=f"encode  {len(frames)} frames") as bar:
         for f in bar:
-            qc, nm = encode_frame(f, fx=fx)
+            qc, nm = encode_frame(f, fx=fx_circuit)
             circuits.append(qc)
             norms.append(nm)
     save_qtape(
@@ -131,13 +135,14 @@ def roundtrip(
     keep_files: bool = typer.Option(False, "--keep-files", help="keep .qtape/.qbits"),
     seed: int = typer.Option(None, help="base RNG seed"),
     renormalize: bool = typer.Option(False, help="clamp frame estimates to unit norm"),
+    fx: str = typer.Option("", "--fx", help='effect chain, e.g. "delay:3,chirp:0.5,ringmod:4"'),
 ) -> None:
     """encode -> measure -> decode in one go, with fidelity metrics."""
     _check_readout(readout)
     qtape_path = output.with_suffix(".qtape")
     qbits_path = output.with_suffix(".qbits")
     t0 = time.perf_counter()
-    encode(in_wav=in_wav, output=qtape_path, n=256, hop=128, sr=16000)
+    encode(in_wav=in_wav, output=qtape_path, n=256, hop=128, sr=16000, fx=fx)
     measure(qtape=qtape_path, output=qbits_path, shots=shots, readout=readout, basis="time", seed=seed)
     decode(qbits=qbits_path, output=output, renormalize=renormalize)
     x = load_audio(in_wav, 16000)
