@@ -138,7 +138,7 @@ def roundtrip(
     qbits_path = output.with_suffix(".qbits")
     t0 = time.perf_counter()
     encode(in_wav=in_wav, output=qtape_path, n=256, hop=128, sr=16000)
-    measure(qtape=qtape_path, output=qbits_path, shots=shots, readout=readout, seed=seed)
+    measure(qtape=qtape_path, output=qbits_path, shots=shots, readout=readout, basis="time", seed=seed)
     decode(qbits=qbits_path, output=output, renormalize=renormalize)
     x = load_audio(in_wav, 16000)
     y = load_audio(output, 16000)
