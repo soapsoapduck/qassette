@@ -10,3 +10,4 @@ dist/
 htmlcov/
 .ipynb_checkpoints/
 scratch/
+outputs/

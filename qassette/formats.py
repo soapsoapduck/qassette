@@ -12,14 +12,18 @@ A .qbits file is an uncompressed NumPy .npz archive with two entries:
 The file is self-contained: decode needs nothing but this file.
 """
 
+import io
 import json
+import zipfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from qiskit import QuantumCircuit, qpy
 
 FORMAT_VERSION = 1
+QTAPE_VERSION = 1
 _SHOT_MODES = ("z", "homodyne")
 
 
@@ -125,6 +129,69 @@ def load_qbits(path: str | Path) -> Qbits:
     if "crc32" in header and zlib.crc32(np.ascontiguousarray(outcomes).tobytes()) != header["crc32"]:
         raise ValueError(f"{path}: outcomes corrupted (CRC mismatch)")
     return Qbits(header=header, outcomes=outcomes)
+
+
+@dataclass
+class Qtape:
+    header: dict
+    circuits: list[QuantumCircuit]
+
+
+def save_qtape(
+    path: str | Path,
+    circuits: list[QuantumCircuit],
+    *,
+    sr: int,
+    N: int,
+    hop: int,
+    length: int,
+    norms: list[float],
+    effects: list[str] | tuple = (),
+) -> None:
+    """Write a .qtape: per-frame circuits (QPY) + JSON header in one zip."""
+    if len(circuits) != len(norms):
+        raise ValueError(f"{len(circuits)} circuits but {len(norms)} norms")
+    header = {
+        "version": QTAPE_VERSION,
+        "sr": int(sr),
+        "N": int(N),
+        "hop": int(hop),
+        "length": int(length),
+        "frames": len(circuits),
+        "norms": [float(v) for v in norms],
+        "effects": list(effects),
+    }
+    buf = io.BytesIO()
+    qpy.dump(list(circuits), buf)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("header.json", json.dumps(header))
+        z.writestr("circuits.qpy", buf.getvalue())
+
+
+def load_qtape(path: str | Path) -> Qtape:
+    """Load and validate a .qtape; raises ValueError on inconsistency."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            header = json.loads(z.read("header.json"))
+            circuits = qpy.load(io.BytesIO(z.read("circuits.qpy")))
+    except (zipfile.BadZipFile, KeyError) as e:
+        raise ValueError(f"{path}: not a .qtape file ({e})") from e
+    if header.get("version") != QTAPE_VERSION:
+        raise ValueError(f"{path}: unsupported .qtape version {header.get('version')!r}")
+    N, hop = header["N"], header["hop"]
+    if N <= 0 or (N & (N - 1)) != 0:
+        raise ValueError(f"{path}: header N={N} is not a power of two")
+    if len(circuits) != header["frames"] or len(circuits) != len(header["norms"]):
+        raise ValueError(
+            f"{path}: {len(circuits)} circuits vs header frames={header['frames']}, "
+            f"norms={len(header['norms'])}"
+        )
+    if len(circuits) != _expected_frames(N, hop, header["length"]):
+        raise ValueError(
+            f"{path}: header N/hop/length imply {_expected_frames(N, hop, header['length'])} "
+            f"frames, file holds {len(circuits)}"
+        )
+    return Qtape(header=header, circuits=circuits)
 
 
 def to_ascii(qbits: Qbits, frame: int, max_shots: int = 16) -> str:

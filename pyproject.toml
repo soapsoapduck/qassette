@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qassette"
+version = "0.1.0"
+description = "Quantum audio cassette: encode, process, and decode audio through Qiskit circuits (simulation only)"
+requires-python = ">=3.11"
+dependencies = [
+    "qiskit>=2,<3",
+    "qiskit-aer",
+    "numpy",
+    "scipy",
+    "soundfile",
+    "typer",
+    "matplotlib",
+]
+
+[project.scripts]
+qassette = "qassette.cli:app"
+
+[tool.setuptools]
+packages = ["qassette"]
