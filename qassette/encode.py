@@ -22,7 +22,8 @@ def encode_frame(frame: np.ndarray) -> tuple[QuantumCircuit, float]:
     """
     frame = np.asarray(frame, dtype=np.float64).ravel()
     N = len(frame)
-    assert N > 0 and (N & (N - 1)) == 0, "frame length must be a power of two"
+    if N <= 0 or (N & (N - 1)) != 0:
+        raise ValueError("frame length must be a power of two")
     n = N.bit_length() - 1
     qc = QuantumCircuit(n)
     norm = float(np.linalg.norm(frame))

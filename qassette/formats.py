@@ -13,6 +13,7 @@ The file is self-contained: decode needs nothing but this file.
 """
 
 import json
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,6 +59,18 @@ def save_qbits(
         raise ValueError(
             f"outcomes shape {outcomes.shape} does not match (len(norms), shots) = ({len(norms)}, {shots})"
         )
+    bits = (int(N).bit_length() - 1) + (1 if mode == "homodyne" else 0)
+    if bits > 16:
+        raise ValueError(
+            f".qbits packs outcomes as uint16: N={N} in {mode} mode needs {bits}-bit "
+            f"outcomes; the format caps N at 2**15 for homodyne / 2**16 for z"
+        )
+    if outcomes.size and (int(outcomes.min()) < 0 or int(outcomes.max()) >= 2**bits):
+        raise ValueError(
+            f"outcome values span [{int(outcomes.min())}, {int(outcomes.max())}], outside "
+            f"the {bits}-bit range implied by N={N}, mode={mode}"
+        )
+    packed = outcomes.astype(np.uint16)
     header = {
         "version": FORMAT_VERSION,
         "sr": int(sr),
@@ -69,9 +82,10 @@ def save_qbits(
         "shots": int(shots),
         "norms": [float(v) for v in norms],
         "effects": list(effects),
+        "crc32": zlib.crc32(packed.tobytes()),
     }
     with open(path, "wb") as f:
-        np.savez(f, header=json.dumps(header), outcomes=outcomes.astype(np.uint16))
+        np.savez(f, header=json.dumps(header), outcomes=packed)
 
 
 def load_qbits(path: str | Path) -> Qbits:
@@ -108,6 +122,8 @@ def load_qbits(path: str | Path) -> Qbits:
             f"{path}: outcome value {int(outcomes.max())} does not fit in {bits} bits "
             f"implied by header N={N}, mode={mode} — header is corrupt"
         )
+    if "crc32" in header and zlib.crc32(np.ascontiguousarray(outcomes).tobytes()) != header["crc32"]:
+        raise ValueError(f"{path}: outcomes corrupted (CRC mismatch)")
     return Qbits(header=header, outcomes=outcomes)
 
 

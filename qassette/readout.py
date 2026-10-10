@@ -25,7 +25,8 @@ def read_exact(circuit: QuantumCircuit) -> np.ndarray:
     bit j of k is qubit j), matching the sample index used at encode time.
     """
     amps = Statevector(circuit).data
-    assert np.max(np.abs(amps.imag)) < _IMAG_TOL, "state has non-real amplitudes"
+    if np.max(np.abs(amps.imag)) >= _IMAG_TOL:
+        raise ValueError("state has non-real amplitudes")
     return amps.real.copy()
 
 
@@ -115,7 +116,12 @@ def sample_homodyne(circuit: QuantumCircuit, shots: int, *, use_aer: bool = Fals
 
 
 def estimate_z(outcomes: np.ndarray, N: int) -> np.ndarray:
-    """|x_k| estimates from Z-basis outcomes: sqrt(count_k / shots). Signs are lost."""
+    """|x_k| estimates from Z-basis outcomes: sqrt(count_k / shots). Signs are lost.
+
+    sqrt of the count fraction is biased low for small-probability bins
+    (Jensen's inequality), so treat these as display/listening magnitudes,
+    not precision estimates.
+    """
     counts = np.bincount(outcomes, minlength=N)
     return np.sqrt(counts / len(outcomes))
 

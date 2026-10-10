@@ -41,8 +41,10 @@ def frame_signal(x: np.ndarray, N: int = 256, hop: int = 128) -> np.ndarray:
     that every real sample is covered by a full set of overlapping windows.
     Returns an array of shape (num_frames, N), float32.
     """
-    assert N > 0 and (N & (N - 1)) == 0, "N must be a power of two"
-    assert 0 < hop <= N, "hop must be in (0, N]"
+    if N <= 0 or (N & (N - 1)) != 0:
+        raise ValueError("N must be a power of two")
+    if not 0 < hop <= N:
+        raise ValueError("hop must be in (0, N]")
     x = np.asarray(x, dtype=np.float64).ravel()
     pad = N - hop
     last = pad + len(x) - 1 if len(x) else 0

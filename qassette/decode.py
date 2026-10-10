@@ -26,17 +26,29 @@ def frames_to_audio(
     return overlap_add(frames, hop=hop, length=length)
 
 
-def decode_qbits(path: str | Path) -> np.ndarray:
+def decode_qbits(path: str | Path, renormalize: bool = False) -> np.ndarray:
     """Reconstruct a waveform using ONLY a .qbits file.
 
     Estimates each frame's amplitude vector from its stored shot outcomes
     (signed for homodyne, magnitudes only for z), rescales by the stored
     norms, and overlap-adds. Sample rate is available in the file header
     via formats.load_qbits.
+
+    renormalize=True scales any frame estimate whose L2 norm exceeds 1 back
+    to unit norm (shot noise can push estimates outside the physical ball,
+    which clips loud at low shot counts). Default off: the raw estimator is
+    unbiased, so leave this disabled for analysis.
     """
     qb = load_qbits(path)
     h = qb.header
     N = h["N"]
     estimate = estimate_homodyne if h["mode"] == "homodyne" else estimate_z
-    amps = [estimate(row, N) for row in qb.outcomes]
+    amps = []
+    for row in qb.outcomes:
+        a = estimate(row, N)
+        if renormalize:
+            nrm = np.linalg.norm(a)
+            if nrm > 1.0:
+                a = a / nrm
+        amps.append(a)
     return frames_to_audio(amps, h["norms"], hop=h["hop"], length=h["length"])

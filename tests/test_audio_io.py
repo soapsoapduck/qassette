@@ -22,5 +22,5 @@ def test_samples_exist():
 
 
 def test_non_power_of_two_rejected():
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         frame_signal(np.zeros(1000), N=300, hop=150)

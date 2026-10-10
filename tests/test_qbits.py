@@ -115,6 +115,44 @@ def test_load_qbits_rejects_corrupt_header(tmp_path, sine_tapes):
         load_qbits(path)
 
 
+def test_crc_detects_outcome_corruption(tmp_path, sine_tapes):
+    _, tapes = sine_tapes
+    qb = load_qbits(tapes[256])
+    tampered = qb.outcomes.copy()
+    tampered[0, 0] ^= 1  # single in-range bit flip; header untouched
+    path = tmp_path / "tampered.qbits"
+    with open(path, "wb") as f:
+        np.savez(f, header=json.dumps(qb.header), outcomes=tampered)
+    with pytest.raises(ValueError, match="CRC"):
+        load_qbits(path)
+
+
+def test_save_rejects_out_of_range_outcomes(tmp_path):
+    bad = np.full((2, 4), 512)  # needs 10 bits; homodyne N=256 allows 9
+    with pytest.raises(ValueError, match="bit"):
+        save_qbits(
+            tmp_path / "bad.qbits", bad, sr=16000, N=256, hop=128, length=129,
+            mode="homodyne", shots=4, norms=[1.0, 1.0],
+        )
+
+
+def test_decode_renormalize_bounds_low_shot_noise(tmp_path):
+    t = np.arange(600) / 16000
+    x = (0.9 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    encoded = encode_signal(x, N=256, hop=128)
+    outcomes = np.stack(
+        [sample_statevector(homodyne_statevector(qc), 64, seed=i) for i, (qc, _) in enumerate(encoded)]
+    )
+    path = tmp_path / "lowshot.qbits"
+    save_qbits(path, outcomes, sr=16000, N=256, hop=128, length=len(x),
+               mode="homodyne", shots=64, norms=[n for _, n in encoded])
+    raw = decode_qbits(path)
+    renorm = decode_qbits(path, renormalize=True)
+    assert not np.array_equal(raw, renorm)  # 64 shots: some estimates exceed unit norm
+    assert np.max(np.abs(renorm)) <= np.max(np.abs(raw))
+    assert np.max(np.abs(renorm)) <= 2 * max(n for _, n in encoded)
+
+
 def test_decode_matches_direct_estimation(sine_tapes):
     """decode_qbits(path) must equal estimating from the in-memory outcomes."""
     x, tapes = sine_tapes
