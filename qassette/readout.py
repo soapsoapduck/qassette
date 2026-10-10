@@ -96,8 +96,28 @@ def _aer_sample(circuit: QuantumCircuit, shots: int, seed: int | None = None) ->
     return np.fromiter((int(s, 2) for s in mem), dtype=np.uint16, count=len(mem))
 
 
-def sample_z(circuit: QuantumCircuit, shots: int, *, use_aer: bool = False, seed: int | None = None) -> np.ndarray:
-    """Z-basis shot outcomes of the data register (n-bit integers)."""
+def sample_z(
+    circuit: QuantumCircuit,
+    shots: int,
+    *,
+    use_aer: bool = False,
+    seed: int | None = None,
+    basis: str = "time",
+) -> np.ndarray:
+    """Z-basis shot outcomes of the data register (n-bit integers).
+
+    basis="freq" appends a QFTGate before measuring, so outcomes are
+    frequency bins (undoing any trailing IQFT of the effect slot: the
+    state is measured right after the QFT). See effects.py for the
+    index convention; magnitudes match numpy's after folding k / N-k.
+    """
+    if basis not in ("time", "freq"):
+        raise ValueError(f"basis must be 'time' or 'freq', got {basis!r}")
+    if basis == "freq":
+        from qiskit.circuit.library import QFTGate
+
+        circuit = circuit.copy()
+        circuit.append(QFTGate(circuit.num_qubits), range(circuit.num_qubits))
     if use_aer:
         return _aer_sample(circuit, shots, seed)
     return sample_statevector(Statevector(circuit), shots, seed)

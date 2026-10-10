@@ -12,13 +12,15 @@ from qiskit import QuantumCircuit
 from qiskit.circuit.library import StatePreparation
 
 from .audio_io import frame_signal
+from .effects import build_fx_circuit
 
 
-def encode_frame(frame: np.ndarray) -> tuple[QuantumCircuit, float]:
+def encode_frame(frame: np.ndarray, fx: QuantumCircuit | None = None) -> tuple[QuantumCircuit, float]:
     """Encode one frame as a quantum state; returns (circuit, norm).
 
     norm is the L2 norm of the frame; norm == 0.0 flags an all-zero frame,
-    which is encoded as |0...0> (empty circuit) and decodes back to silence.
+    which is encoded as |0...0> and decodes back to silence. If fx is
+    given, it is composed after the preparation (the effect-chain slot).
     """
     frame = np.asarray(frame, dtype=np.float64).ravel()
     N = len(frame)
@@ -27,12 +29,20 @@ def encode_frame(frame: np.ndarray) -> tuple[QuantumCircuit, float]:
     n = N.bit_length() - 1
     qc = QuantumCircuit(n)
     norm = float(np.linalg.norm(frame))
-    if norm == 0.0:
-        return qc, 0.0
-    qc.append(StatePreparation(frame / norm), range(n))
+    if norm != 0.0:
+        qc.append(StatePreparation(frame / norm), range(n))
+    if fx is not None:
+        qc.compose(fx, range(n), inplace=True)
     return qc, norm
 
 
-def encode_signal(x: np.ndarray, N: int = 256, hop: int = 128) -> list[tuple[QuantumCircuit, float]]:
-    """Frame x (windowed, via frame_signal) and amplitude-encode every frame."""
-    return [encode_frame(f) for f in frame_signal(x, N=N, hop=hop)]
+def encode_signal(
+    x: np.ndarray, N: int = 256, hop: int = 128, chain: tuple = ()
+) -> list[tuple[QuantumCircuit, float]]:
+    """Frame x (windowed, via frame_signal) and amplitude-encode every frame.
+
+    Every circuit carries the QFT -> chain -> IQFT effect slot (identity
+    for an empty chain), so tapes always contain the effect chain.
+    """
+    fx = build_fx_circuit(N.bit_length() - 1, chain)
+    return [encode_frame(f, fx=fx) for f in frame_signal(x, N=N, hop=hop)]

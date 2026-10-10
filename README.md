@@ -42,6 +42,12 @@ qassette bits song.qbits --frame 10 --max-shots 32
 
 # all three steps + fidelity metrics; --keep-files keeps the intermediates
 qassette roundtrip samples\sine_440hz_2s.wav -o out.wav --shots 4096 --readout homodyne --keep-files
+
+# measure in the frequency basis (right after the QFT) ...
+qassette measure song.qtape -o song_freq.qbits --shots 4096 --readout z --basis freq
+
+# ... or go straight to a quantum-vs-classical spectrogram image
+qassette spectrogram song.qtape --shots 4096 -o spec.png
 ```
 
 More shots = cleaner playback: RMS error falls as 1/sqrt(shots). Try 64

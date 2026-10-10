@@ -54,10 +54,13 @@ def save_qbits(
     shots: int,
     norms: list[float],
     effects: list[str] | tuple = (),
+    basis: str = "time",
 ) -> None:
     """Write a .qbits tape. outcomes: (num_frames, shots) integer array."""
     if mode not in _SHOT_MODES:
         raise ValueError(f"mode must be one of {_SHOT_MODES}, got {mode!r}")
+    if basis not in ("time", "freq"):
+        raise ValueError(f"basis must be 'time' or 'freq', got {basis!r}")
     outcomes = np.asarray(outcomes)
     if outcomes.ndim != 2 or outcomes.shape != (len(norms), shots):
         raise ValueError(
@@ -82,7 +85,7 @@ def save_qbits(
         "hop": int(hop),
         "length": int(length),
         "mode": mode,
-        "basis": "time",
+        "basis": basis,
         "shots": int(shots),
         "norms": [float(v) for v in norms],
         "effects": list(effects),

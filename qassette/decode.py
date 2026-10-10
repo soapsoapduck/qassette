@@ -41,6 +41,11 @@ def decode_qbits(path: str | Path, renormalize: bool = False) -> np.ndarray:
     """
     qb = load_qbits(path)
     h = qb.header
+    if h.get("basis", "time") != "time":
+        raise ValueError(
+            f"decode_qbits requires basis='time' outcomes; this tape is basis={h['basis']!r} "
+            "(frequency-bin magnitudes carry no phases to invert — use viz.quantum_spectrogram)"
+        )
     N = h["N"]
     estimate = estimate_homodyne if h["mode"] == "homodyne" else estimate_z
     amps = []

@@ -7,10 +7,11 @@ import numpy as np
 import typer
 
 from .audio_io import frame_signal, load_audio, save_audio
-from .decode import decode_qbits
+from .decode import decode_qbits, frames_to_audio
+from .effects import build_fx_circuit, chain_names
 from .encode import encode_frame
-from .formats import load_qbits, load_qtape, save_qbits, save_qtape, to_ascii
-from .readout import sample_homodyne, sample_z
+from .formats import FORMAT_VERSION, Qbits, load_qbits, load_qtape, save_qbits, save_qtape, to_ascii
+from .readout import read_exact, sample_homodyne, sample_z
 
 app = typer.Typer(
     help="qassette: encode audio into quantum circuits, measure, and play back. Simulation only.",
@@ -39,13 +40,18 @@ def encode(
     t0 = time.perf_counter()
     x = load_audio(in_wav, sr)
     frames = frame_signal(x, N=n, hop=hop)
+    chain = ()  # effect-chain slot: QFT -> chain -> IQFT, identity when empty
+    fx = build_fx_circuit(n.bit_length() - 1, chain)
     circuits, norms = [], []
     with typer.progressbar(frames, label=f"encode  {len(frames)} frames") as bar:
         for f in bar:
-            qc, nm = encode_frame(f)
+            qc, nm = encode_frame(f, fx=fx)
             circuits.append(qc)
             norms.append(nm)
-    save_qtape(output, circuits, sr=sr, N=n, hop=hop, length=len(x), norms=norms)
+    save_qtape(
+        output, circuits, sr=sr, N=n, hop=hop, length=len(x), norms=norms,
+        effects=chain_names(chain),
+    )
     typer.echo(
         f"encode  {in_wav.name} -> {output} "
         f"({output.stat().st_size:,} bytes) in {time.perf_counter() - t0:.1f}s"
@@ -58,26 +64,34 @@ def measure(
     output: Path = typer.Option(..., "--output", "-o", help="output .qbits"),
     shots: int = typer.Option(4096, help="shots per frame"),
     readout: str = typer.Option("homodyne", help="homodyne (signed) or z (magnitudes)"),
+    basis: str = typer.Option("time", help="time, or freq to measure right after the QFT"),
     seed: int = typer.Option(None, help="base RNG seed (frame i uses seed+i)"),
 ) -> None:
     """Measure every frame of a .qtape into a .qbits file of raw shot outcomes."""
     _check_readout(readout)
+    if basis not in ("time", "freq"):
+        raise typer.BadParameter("basis must be 'time' or 'freq'")
+    if basis == "freq" and readout != "z":
+        raise typer.BadParameter("basis='freq' requires readout='z'")
     t0 = time.perf_counter()
     tape = load_qtape(qtape)
-    sampler = sample_homodyne if readout == "homodyne" else sample_z
     rows = []
     with typer.progressbar(
         list(enumerate(tape.circuits)), label=f"measure {len(tape.circuits)} frames"
     ) as bar:
         for i, qc in bar:
-            rows.append(sampler(qc, shots, seed=None if seed is None else seed + i))
+            s = None if seed is None else seed + i
+            if readout == "homodyne":
+                rows.append(sample_homodyne(qc, shots, seed=s))
+            else:
+                rows.append(sample_z(qc, shots, seed=s, basis=basis))
     h = tape.header
     save_qbits(
         output, np.stack(rows), sr=h["sr"], N=h["N"], hop=h["hop"], length=h["length"],
-        mode=readout, shots=shots, norms=h["norms"], effects=h["effects"],
+        mode=readout, shots=shots, norms=h["norms"], effects=h["effects"], basis=basis,
     )
     typer.echo(
-        f"measure {qtape.name} -> {output} ({readout}, {shots} shots/frame, "
+        f"measure {qtape.name} -> {output} ({readout}/{basis}, {shots} shots/frame, "
         f"{output.stat().st_size:,} bytes) in {time.perf_counter() - t0:.1f}s"
     )
 
@@ -137,6 +151,40 @@ def roundtrip(
     if not keep_files:
         qtape_path.unlink(missing_ok=True)
         qbits_path.unlink(missing_ok=True)
+
+
+@app.command()
+def spectrogram(
+    qtape: Path = typer.Argument(..., exists=True, dir_okay=False, help="input .qtape"),
+    output: Path = typer.Option(..., "--output", "-o", help="output PNG"),
+    shots: int = typer.Option(4096, help="shots per frame"),
+    seed: int = typer.Option(None, help="base RNG seed"),
+) -> None:
+    """Quantum spectrogram (freq-basis shot histograms) vs scipy, side by side."""
+    from .viz import spectrogram_comparison
+
+    t0 = time.perf_counter()
+    tape = load_qtape(qtape)
+    h = tape.header
+    rows, amps = [], []
+    with typer.progressbar(
+        list(enumerate(tape.circuits)), label=f"measure {len(tape.circuits)} frames"
+    ) as bar:
+        for i, qc in bar:
+            rows.append(sample_z(qc, shots, seed=None if seed is None else seed + i, basis="freq"))
+            amps.append(read_exact(qc))
+    qb = Qbits(
+        header={
+            "version": FORMAT_VERSION, "sr": h["sr"], "N": h["N"], "hop": h["hop"],
+            "length": h["length"], "mode": "z", "basis": "freq", "shots": shots,
+            "norms": h["norms"], "effects": h["effects"],
+        },
+        outcomes=np.stack(rows),
+    )
+    x = frames_to_audio(amps, h["norms"], hop=h["hop"], length=h["length"])
+    fig = spectrogram_comparison(qb, x, h["sr"])
+    fig.savefig(output, dpi=120)
+    typer.echo(f"spectrogram {qtape.name} -> {output} in {time.perf_counter() - t0:.1f}s")
 
 
 if __name__ == "__main__":
