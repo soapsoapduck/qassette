@@ -46,6 +46,12 @@ qassette roundtrip samples\sine_440hz_2s.wav -o out.wav --shots 4096 --readout h
 # quantum effects: phase gates acting on the spectrum between QFT and IQFT
 qassette roundtrip samples\a_major_chord_2s.wav -o fx.wav --shots 65536 --fx "delay:64,chirp:4,ringmod:16"
 
+# non-unitary filters via post-selection (cutoffs in bins of sr/N Hz; optional
+# softness angle < pi), and a single-sideband frequency shifter. One
+# post-selected effect per chain; success rate is recorded in the .qbits header.
+qassette roundtrip samples\a_major_chord_2s.wav -o lp.wav --shots 65536 --fx "lowpass:8"
+qassette roundtrip samples\a_major_chord_2s.wav -o up.wav --shots 65536 --fx "fshift:8"
+
 # measure in the frequency basis (right after the QFT) ...
 qassette measure song.qtape -o song_freq.qbits --shots 4096 --readout z --basis freq
 

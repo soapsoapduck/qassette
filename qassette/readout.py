@@ -29,7 +29,7 @@ def read_exact(circuit: QuantumCircuit) -> np.ndarray:
     return amps.real.copy()
 
 
-def build_homodyne_circuit(circuit: QuantumCircuit) -> QuantumCircuit:
+def build_homodyne_circuit(circuit: QuantumCircuit, data_qubits: int | None = None) -> QuantumCircuit:
     """Interference circuit on n+1 qubits (no measurements) for sign readout.
 
     The ENTIRE input circuit (state preparation plus any effect gates) is
@@ -57,6 +57,7 @@ def build_homodyne_circuit(circuit: QuantumCircuit) -> QuantumCircuit:
     add an S-dagger on the ancilla before its final H to read Im(psi_k)).
     """
     n = circuit.num_qubits
+    nd = n if data_qubits is None else data_qubits
     if circuit.num_clbits or any(
         inst.operation.name in ("measure", "reset") for inst in circuit.data
     ):
@@ -65,15 +66,15 @@ def build_homodyne_circuit(circuit: QuantumCircuit) -> QuantumCircuit:
     qc.h(n)
     if circuit.data:  # empty circuit (zero frame) prepares |0...0>; skip identity gate
         qc.append(circuit.to_gate(label="state").control(1, ctrl_state=0), [n, *range(n)])
-    for j in range(n):
+    for j in range(nd):  # reference touches DATA qubits only, never a filter ancilla
         qc.ch(n, j)
     qc.h(n)
     return qc
 
 
-def homodyne_statevector(circuit: QuantumCircuit) -> Statevector:
+def homodyne_statevector(circuit: QuantumCircuit, data_qubits: int | None = None) -> Statevector:
     """Statevector of the homodyne interference circuit for an encode circuit."""
-    return Statevector(build_homodyne_circuit(circuit))
+    return Statevector(build_homodyne_circuit(circuit, data_qubits))
 
 
 def sample_statevector(sv: Statevector, shots: int, seed: int | None = None) -> np.ndarray:
@@ -103,6 +104,7 @@ def sample_z(
     use_aer: bool = False,
     seed: int | None = None,
     basis: str = "time",
+    data_qubits: int | None = None,
 ) -> np.ndarray:
     """Z-basis shot outcomes of the data register (n-bit integers).
 
@@ -110,43 +112,74 @@ def sample_z(
     frequency bins (undoing any trailing IQFT of the effect slot: the
     state is measured right after the QFT). See effects.py for the
     index convention; magnitudes match numpy's after folding k / N-k.
+    data_qubits limits the freq-basis QFT to the data register when the
+    circuit also carries a filter ancilla.
     """
     if basis not in ("time", "freq"):
         raise ValueError(f"basis must be 'time' or 'freq', got {basis!r}")
     if basis == "freq":
         from qiskit.circuit.library import QFTGate
 
+        nd = data_qubits if data_qubits is not None else circuit.num_qubits
         circuit = circuit.copy()
-        circuit.append(QFTGate(circuit.num_qubits), range(circuit.num_qubits))
+        circuit.append(QFTGate(nd), range(nd))
     if use_aer:
         return _aer_sample(circuit, shots, seed)
     return sample_statevector(Statevector(circuit), shots, seed)
 
 
-def sample_homodyne(circuit: QuantumCircuit, shots: int, *, use_aer: bool = False, seed: int | None = None) -> np.ndarray:
-    """Homodyne shot outcomes ((n+1)-bit integers, ancilla in bit n)."""
-    hqc = build_homodyne_circuit(circuit)
+def sample_homodyne(
+    circuit: QuantumCircuit,
+    shots: int,
+    *,
+    use_aer: bool = False,
+    seed: int | None = None,
+    data_qubits: int | None = None,
+) -> np.ndarray:
+    """Homodyne shot outcomes. Bit layout: data bits low, then the filter
+    ancilla (if the circuit has one), then the homodyne ancilla on top."""
+    hqc = build_homodyne_circuit(circuit, data_qubits)
     if use_aer:
         return _aer_sample(hqc, shots, seed)
     return sample_statevector(Statevector(hqc), shots, seed)
 
 
-def estimate_z(outcomes: np.ndarray, N: int) -> np.ndarray:
+def estimate_z(outcomes: np.ndarray, N: int, filter_bit: int | None = None) -> np.ndarray:
     """|x_k| estimates from Z-basis outcomes: sqrt(count_k / shots). Signs are lost.
 
     sqrt of the count fraction is biased low for small-probability bins
     (Jensen's inequality), so treat these as display/listening magnitudes,
     not precision estimates.
+
+    filter_bit: bit index of a post-selection ancilla. Shots with that bit
+    set are discarded; the denominator stays the TOTAL shot count, so the
+    estimate converges to the magnitudes of the masked (attenuated)
+    spectrum rather than a renormalized one.
     """
-    counts = np.bincount(outcomes, minlength=N)
-    return np.sqrt(counts / len(outcomes))
+    total = len(outcomes)
+    if filter_bit is not None:
+        outcomes = outcomes[(outcomes >> filter_bit) & 1 == 0]
+    counts = np.bincount(outcomes & (N - 1), minlength=N)
+    return np.sqrt(counts / total)
 
 
-def estimate_homodyne(outcomes: np.ndarray, N: int) -> np.ndarray:
-    """Signed Re(psi_k) estimates: sqrt(N) * (P(anc=0,k) - P(anc=1,k))."""
-    counts = np.bincount(outcomes, minlength=2 * N)
-    p = counts / len(outcomes)
-    return np.sqrt(N) * (p[:N] - p[N:])
+def estimate_homodyne(outcomes: np.ndarray, N: int, filter_bit: int | None = None) -> np.ndarray:
+    """Signed Re(psi_k) estimates: sqrt(N) * (P(anc=0,k) - P(anc=1,k)).
+
+    With filter_bit set, failed post-selections are discarded from the
+    numerator while the denominator stays the TOTAL shot count: the
+    estimate converges to the filtered (unrenormalized) amplitudes.
+    """
+    n = N.bit_length() - 1
+    anc_bit = n if filter_bit is None else filter_bit + 1
+    total = len(outcomes)
+    if filter_bit is not None:
+        outcomes = outcomes[(outcomes >> filter_bit) & 1 == 0]
+    anc = (outcomes >> anc_bit) & 1
+    k = outcomes & (N - 1)
+    c0 = np.bincount(k[anc == 0], minlength=N)
+    c1 = np.bincount(k[anc == 1], minlength=N)
+    return np.sqrt(N) * (c0 - c1) / total
 
 
 def read_frame(

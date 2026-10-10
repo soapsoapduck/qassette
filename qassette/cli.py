@@ -8,7 +8,7 @@ import typer
 
 from .audio_io import frame_signal, load_audio, save_audio
 from .decode import decode_qbits, frames_to_audio
-from .effects import build_fx_circuit, chain_names, parse_fx
+from .effects import build_fx_circuit, chain_names, parse_fx, uses_ancilla
 from .encode import encode_frame
 from .formats import FORMAT_VERSION, Qbits, load_qbits, load_qtape, save_qbits, save_qtape, to_ascii
 from .readout import read_exact, sample_homodyne, sample_z
@@ -55,6 +55,7 @@ def encode(
     save_qtape(
         output, circuits, sr=sr, N=n, hop=hop, length=len(x), norms=norms,
         effects=chain_names(chain),
+        filter_ancilla=uses_ancilla(fx_circuit, n.bit_length() - 1),
     )
     typer.echo(
         f"encode  {in_wav.name} -> {output} "
@@ -79,6 +80,9 @@ def measure(
         raise typer.BadParameter("basis='freq' requires readout='z'")
     t0 = time.perf_counter()
     tape = load_qtape(qtape)
+    h = tape.header
+    nd = int(h["N"]).bit_length() - 1
+    filtered = bool(h.get("filter"))
     rows = []
     with typer.progressbar(
         list(enumerate(tape.circuits)), label=f"measure {len(tape.circuits)} frames"
@@ -86,17 +90,24 @@ def measure(
         for i, qc in bar:
             s = None if seed is None else seed + i
             if readout == "homodyne":
-                rows.append(sample_homodyne(qc, shots, seed=s))
+                rows.append(sample_homodyne(qc, shots, seed=s, data_qubits=nd))
             else:
-                rows.append(sample_z(qc, shots, seed=s, basis=basis))
-    h = tape.header
+                rows.append(sample_z(qc, shots, seed=s, basis=basis, data_qubits=nd))
+    rates = None
+    if filtered:
+        rates = [float(np.mean((row >> nd) & 1 == 0)) for row in rows]
     save_qbits(
         output, np.stack(rows), sr=h["sr"], N=h["N"], hop=h["hop"], length=h["length"],
         mode=readout, shots=shots, norms=h["norms"], effects=h["effects"], basis=basis,
+        filter_ancilla=filtered, success_rates=rates,
+    )
+    rate_note = "" if rates is None else (
+        f", post-selection success avg {np.mean(rates):.1%} "
+        f"(min {min(rates):.1%})"
     )
     typer.echo(
         f"measure {qtape.name} -> {output} ({readout}/{basis}, {shots} shots/frame, "
-        f"{output.stat().st_size:,} bytes) in {time.perf_counter() - t0:.1f}s"
+        f"{output.stat().st_size:,} bytes{rate_note}) in {time.perf_counter() - t0:.1f}s"
     )
 
 
@@ -171,18 +182,24 @@ def spectrogram(
     t0 = time.perf_counter()
     tape = load_qtape(qtape)
     h = tape.header
+    nd = int(h["N"]).bit_length() - 1
+    filtered = bool(h.get("filter"))
     rows, amps = [], []
     with typer.progressbar(
         list(enumerate(tape.circuits)), label=f"measure {len(tape.circuits)} frames"
     ) as bar:
         for i, qc in bar:
-            rows.append(sample_z(qc, shots, seed=None if seed is None else seed + i, basis="freq"))
-            amps.append(read_exact(qc))
+            rows.append(
+                sample_z(qc, shots, seed=None if seed is None else seed + i,
+                         basis="freq", data_qubits=nd)
+            )
+            a = read_exact(qc)
+            amps.append(a[: h["N"]])  # filtered circuits: keep the ancilla=0 block
     qb = Qbits(
         header={
             "version": FORMAT_VERSION, "sr": h["sr"], "N": h["N"], "hop": h["hop"],
             "length": h["length"], "mode": "z", "basis": "freq", "shots": shots,
-            "norms": h["norms"], "effects": h["effects"],
+            "norms": h["norms"], "effects": h["effects"], "filter": filtered,
         },
         outcomes=np.stack(rows),
     )

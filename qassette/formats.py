@@ -55,18 +55,27 @@ def save_qbits(
     norms: list[float],
     effects: list[str] | tuple = (),
     basis: str = "time",
+    filter_ancilla: bool = False,
+    success_rates: list[float] | None = None,
 ) -> None:
-    """Write a .qbits tape. outcomes: (num_frames, shots) integer array."""
+    """Write a .qbits tape. outcomes: (num_frames, shots) integer array.
+
+    Bit layout per outcome: data bits [0, n), then the filter ancilla at
+    bit n when filter_ancilla is set, then the homodyne ancilla on top.
+    success_rates records the per-frame post-selection success fraction.
+    """
     if mode not in _SHOT_MODES:
         raise ValueError(f"mode must be one of {_SHOT_MODES}, got {mode!r}")
     if basis not in ("time", "freq"):
         raise ValueError(f"basis must be 'time' or 'freq', got {basis!r}")
+    if success_rates is not None and len(success_rates) != len(norms):
+        raise ValueError(f"{len(success_rates)} success rates for {len(norms)} frames")
     outcomes = np.asarray(outcomes)
     if outcomes.ndim != 2 or outcomes.shape != (len(norms), shots):
         raise ValueError(
             f"outcomes shape {outcomes.shape} does not match (len(norms), shots) = ({len(norms)}, {shots})"
         )
-    bits = (int(N).bit_length() - 1) + (1 if mode == "homodyne" else 0)
+    bits = (int(N).bit_length() - 1) + (1 if filter_ancilla else 0) + (1 if mode == "homodyne" else 0)
     if bits > 16:
         raise ValueError(
             f".qbits packs outcomes as uint16: N={N} in {mode} mode needs {bits}-bit "
@@ -89,6 +98,8 @@ def save_qbits(
         "shots": int(shots),
         "norms": [float(v) for v in norms],
         "effects": list(effects),
+        "filter": bool(filter_ancilla),
+        "success_rates": None if success_rates is None else [float(v) for v in success_rates],
         "crc32": zlib.crc32(packed.tobytes()),
     }
     with open(path, "wb") as f:
@@ -123,7 +134,10 @@ def load_qbits(path: str | Path) -> Qbits:
             f"{path}: header says N={N}, hop={hop}, length={header['length']} "
             f"=> {expected} frames, but file holds {outcomes.shape[0]}"
         )
-    bits = (N.bit_length() - 1) + (1 if mode == "homodyne" else 0)
+    rates = header.get("success_rates")
+    if rates is not None and len(rates) != outcomes.shape[0]:
+        raise ValueError(f"{path}: {len(rates)} success rates for {outcomes.shape[0]} frames")
+    bits = (N.bit_length() - 1) + (1 if header.get("filter") else 0) + (1 if mode == "homodyne" else 0)
     if outcomes.size and int(outcomes.max()) >= 2**bits:
         raise ValueError(
             f"{path}: outcome value {int(outcomes.max())} does not fit in {bits} bits "
@@ -150,6 +164,7 @@ def save_qtape(
     length: int,
     norms: list[float],
     effects: list[str] | tuple = (),
+    filter_ancilla: bool = False,
 ) -> None:
     """Write a .qtape: per-frame circuits (QPY) + JSON header in one zip."""
     if len(circuits) != len(norms):
@@ -163,6 +178,7 @@ def save_qtape(
         "frames": len(circuits),
         "norms": [float(v) for v in norms],
         "effects": list(effects),
+        "filter": bool(filter_ancilla),
     }
     buf = io.BytesIO()
     qpy.dump(list(circuits), buf)
@@ -198,22 +214,28 @@ def load_qtape(path: str | Path) -> Qtape:
 
 
 def to_ascii(qbits: Qbits, frame: int, max_shots: int = 16) -> str:
-    """Render one frame's shots as literal bitstrings, ancilla separated.
+    """Render one frame's shots as literal bitstrings, ancillas separated.
 
-    Homodyne lines look like "a | dddddddd" where a is the ancilla (qubit n,
-    leftmost) and d are the n data bits (qubit n-1 .. 0). Z lines are just
-    the n data bits.
+    Bit layout (left to right in each line): homodyne ancilla (if mode is
+    homodyne), then the filter ancilla (if the tape used post-selection),
+    then the n data bits (qubit n-1 .. 0).
     """
     header = qbits.header
     n = qbits.n
     shown = qbits.outcomes[frame][:max_shots]
     homodyne = header["mode"] == "homodyne"
-    width = n + 1 if homodyne else n
+    filtered = bool(header.get("filter"))
+    width = n + (1 if homodyne else 0) + (1 if filtered else 0)
+    anc_chars = (1 if homodyne else 0) + (1 if filtered else 0)
+    label = ("a " if homodyne else "") + ("f " if filtered else "")
     lines = [
         f"frame {frame} | mode={header['mode']} | showing {len(shown)}/{header['shots']} shots",
-        ("a | " + "d" * n) if homodyne else "d" * n,
+        (label + "| " if anc_chars else "") + "d" * n,
     ]
     for o in shown:
         bits = format(int(o), f"0{width}b")
-        lines.append(f"{bits[0]} | {bits[1:]}" if homodyne else bits)
+        if anc_chars:
+            lines.append(" ".join(bits[:anc_chars]) + " | " + bits[anc_chars:])
+        else:
+            lines.append(bits)
     return "\n".join(lines)

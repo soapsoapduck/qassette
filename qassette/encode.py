@@ -27,12 +27,12 @@ def encode_frame(frame: np.ndarray, fx: QuantumCircuit | None = None) -> tuple[Q
     if N <= 0 or (N & (N - 1)) != 0:
         raise ValueError("frame length must be a power of two")
     n = N.bit_length() - 1
-    qc = QuantumCircuit(n)
+    qc = QuantumCircuit(n if fx is None else max(n, fx.num_qubits))
     norm = float(np.linalg.norm(frame))
     if norm != 0.0:
         qc.append(StatePreparation(frame / norm), range(n))
     if fx is not None:
-        qc.compose(fx, range(n), inplace=True)
+        qc.compose(fx, range(fx.num_qubits), inplace=True)
     return qc, norm
 
 

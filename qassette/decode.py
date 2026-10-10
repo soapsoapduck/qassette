@@ -47,10 +47,11 @@ def decode_qbits(path: str | Path, renormalize: bool = False) -> np.ndarray:
             "(frequency-bin magnitudes carry no phases to invert — use viz.quantum_spectrogram)"
         )
     N = h["N"]
+    filter_bit = (N.bit_length() - 1) if h.get("filter") else None
     estimate = estimate_homodyne if h["mode"] == "homodyne" else estimate_z
     amps = []
     for row in qb.outcomes:
-        a = estimate(row, N)
+        a = estimate(row, N, filter_bit)
         if renormalize:
             nrm = np.linalg.norm(a)
             if nrm > 1.0:
