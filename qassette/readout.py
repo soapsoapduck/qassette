@@ -10,7 +10,6 @@ ancilla is the LEFTMOST character.
 
 import numpy as np
 from qiskit import QuantumCircuit
-from qiskit.circuit.library import StatePreparation
 from qiskit.quantum_info import Statevector
 
 _IMAG_TOL = 1e-9
@@ -30,25 +29,15 @@ def read_exact(circuit: QuantumCircuit) -> np.ndarray:
     return amps.real.copy()
 
 
-def _prepared_vector(circuit: QuantumCircuit) -> np.ndarray:
-    """Extract the real amplitude vector an encode_frame circuit prepares."""
-    for inst in circuit.data:
-        if isinstance(inst.operation, StatePreparation):
-            amps = np.asarray(inst.operation.params, dtype=complex)
-            assert np.max(np.abs(amps.imag)) < _IMAG_TOL
-            return amps.real
-    vec = np.zeros(2**circuit.num_qubits)  # empty circuit: |0...0> (zero frame)
-    vec[0] = 1.0
-    return vec
-
-
 def build_homodyne_circuit(circuit: QuantumCircuit) -> QuantumCircuit:
     """Interference circuit on n+1 qubits (no measurements) for sign readout.
 
-    With psi the n-qubit frame state and r the uniform state (H on every
-    data qubit, r_k = 1/sqrt(N)):
+    The ENTIRE input circuit (state preparation plus any effect gates) is
+    anti-controlled on the ancilla, so the anc=0 branch holds the circuit's
+    actual output state |psi>, not just its initially prepared one. With r
+    the uniform state (controlled-H on every data qubit, r_k = 1/sqrt(N)):
 
-        H(anc); anti-controlled StatePreparation(psi) on anc=0;
+        H(anc); anti-controlled circuit-gate on anc=0;
         controlled-H on every data qubit on anc=1
 
     produces (|0>|psi> + |1>|r>)/sqrt(2). The final H on the ancilla maps
@@ -56,19 +45,26 @@ def build_homodyne_circuit(circuit: QuantumCircuit) -> QuantumCircuit:
 
         (1/2) [ |0>(|psi> + |r>) + |1>(|psi> - |r>) ]
 
-    so for real psi:
+    so
 
         P(anc=0, k) - P(anc=1, k)
             = (1/4)(|psi_k + r_k|^2 - |psi_k - r_k|^2)
-            = psi_k * r_k = Re(psi_k) / sqrt(N)
+            = Re(psi_k) * r_k = Re(psi_k) / sqrt(N)
 
-    hence Re(psi_k) = sqrt(N) * (P(anc=0, k) - P(anc=1, k)).
+    hence Re(psi_k) = sqrt(N) * (P(anc=0, k) - P(anc=1, k)). Note only the
+    real quadrature is read: effects that rotate amplitudes into the
+    imaginary plane are invisible to this estimator (keep effects real, or
+    add an S-dagger on the ancilla before its final H to read Im(psi_k)).
     """
     n = circuit.num_qubits
-    psi = _prepared_vector(circuit)
+    if circuit.num_clbits or any(
+        inst.operation.name in ("measure", "reset") for inst in circuit.data
+    ):
+        raise ValueError("homodyne readout requires a measurement-free unitary circuit")
     qc = QuantumCircuit(n + 1)
     qc.h(n)
-    qc.append(StatePreparation(psi).control(1, ctrl_state=0), [n, *range(n)])
+    if circuit.data:  # empty circuit (zero frame) prepares |0...0>; skip identity gate
+        qc.append(circuit.to_gate(label="state").control(1, ctrl_state=0), [n, *range(n)])
     for j in range(n):
         qc.ch(n, j)
     qc.h(n)

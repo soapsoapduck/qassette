@@ -55,6 +55,26 @@ def test_homodyne_identity_exact():
     assert np.max(np.abs(est - psi)) < 1e-10
 
 
+def test_homodyne_reads_post_effect_state():
+    """Homodyne must read the circuit's OUTPUT state, not the prepared one."""
+    rng = np.random.default_rng(21)
+    frame = rng.normal(size=256)
+    qc, norm = encode_frame(frame)
+    qc.z(7)  # real effect: flips the sign of samples 128..255
+    effected = read_exact(qc)
+    assert not np.allclose(effected, frame / norm)  # effect actually changed the state
+    probs = np.abs(homodyne_statevector(qc).data) ** 2
+    est = np.sqrt(256) * (probs[:256] - probs[256:])
+    assert np.max(np.abs(est - effected)) < 1e-10
+
+
+def test_homodyne_rejects_measured_circuit():
+    qc, _ = encode_frame(np.ones(8))
+    qc.measure_all()
+    with pytest.raises(ValueError, match="measurement-free"):
+        homodyne_statevector(qc)
+
+
 def test_z_magnitudes_statevector_and_aer():
     frame = np.zeros(8)
     frame[1], frame[6] = 0.6, -0.8
