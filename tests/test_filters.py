@@ -6,7 +6,7 @@ from qassette.decode import decode_qbits
 from qassette.effects import build_fx_circuit, parse_fx
 from qassette.encode import encode_frame, encode_signal
 from qassette.formats import load_qbits, save_qbits, to_ascii
-from qassette.readout import estimate_z, sample_homodyne, sample_z
+from qassette.readout import estimate_z, sample_homodyne, sample_z, success_rate
 
 N = 256
 SR = 16000
@@ -86,7 +86,8 @@ def test_filtered_homodyne_pipeline(tmp_path):
     rows = [
         sample_homodyne(qc, 8192, seed=i, data_qubits=8) for i, (qc, _) in enumerate(encoded)
     ]
-    rates = [float(np.mean((r >> 8) & 1 == 0)) for r in rows]
+    rates = [success_rate(r, 8, homodyne=True) for r in rows]
+    assert np.mean(rates) > 0.95  # 440 Hz sits inside a bin-12 lowpass
     path = tmp_path / "lp.qbits"
     save_qbits(
         path, np.stack(rows), sr=SR, N=256, hop=128, length=len(x), mode="homodyne",
@@ -112,7 +113,8 @@ def test_hard_lowpass_removes_out_of_band_tone(tmp_path):
     rows = [
         sample_homodyne(qc, 4096, seed=i, data_qubits=8) for i, (qc, _) in enumerate(encoded)
     ]
-    rates = [float(np.mean((r >> 8) & 1 == 0)) for r in rows]
+    rates = [success_rate(r, 8, homodyne=True) for r in rows]
+    assert np.mean(rates) < 0.2  # nearly all energy is above a bin-4 lowpass
     path = tmp_path / "kill.qbits"
     save_qbits(
         path, np.stack(rows), sr=SR, N=256, hop=128, length=len(x), mode="homodyne",
@@ -120,6 +122,15 @@ def test_hard_lowpass_removes_out_of_band_tone(tmp_path):
     )
     rec = decode_qbits(path)
     assert float(np.mean(rec**2)) < 0.05 * float(np.mean(x**2))
+
+
+def test_success_rate_removes_homodyne_reference_branch():
+    # filter bit 2; 6 of 8 shots have it low -> raw r = 0.75
+    outs = np.array([0b000, 0b001, 0b010, 0b011, 0b100, 0b101, 0b000, 0b011], dtype=np.uint16)
+    assert success_rate(outs, 2) == pytest.approx(0.75)
+    assert success_rate(outs, 2, homodyne=True) == pytest.approx(0.5)  # p = 2r - 1
+    all_high = np.full(8, 0b100, dtype=np.uint16)
+    assert success_rate(all_high, 2, homodyne=True) == 0.0  # clamped
 
 
 def test_parser_rules():

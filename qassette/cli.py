@@ -11,7 +11,7 @@ from .decode import decode_qbits, frames_to_audio
 from .effects import build_fx_circuit, chain_names, parse_fx, uses_ancilla
 from .encode import encode_frame
 from .formats import FORMAT_VERSION, Qbits, load_qbits, load_qtape, save_qbits, save_qtape, to_ascii
-from .readout import read_exact, sample_homodyne, sample_z
+from .readout import read_exact, sample_homodyne, sample_z, success_rate
 
 app = typer.Typer(
     help="qassette: encode audio into quantum circuits, measure, and play back. Simulation only.",
@@ -95,7 +95,7 @@ def measure(
                 rows.append(sample_z(qc, shots, seed=s, basis=basis, data_qubits=nd))
     rates = None
     if filtered:
-        rates = [float(np.mean((row >> nd) & 1 == 0)) for row in rows]
+        rates = [success_rate(row, nd, homodyne=(readout == "homodyne")) for row in rows]
     save_qbits(
         output, np.stack(rows), sr=h["sr"], N=h["N"], hop=h["hop"], length=h["length"],
         mode=readout, shots=shots, norms=h["norms"], effects=h["effects"], basis=basis,

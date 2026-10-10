@@ -182,6 +182,19 @@ def estimate_homodyne(outcomes: np.ndarray, N: int, filter_bit: int | None = Non
     return np.sqrt(N) * (c0 - c1) / total
 
 
+def success_rate(outcomes: np.ndarray, filter_bit: int, *, homodyne: bool = False) -> float:
+    """Physical post-selection success rate from raw shot outcomes.
+
+    For z outcomes this is simply the fraction of shots with the filter
+    ancilla low. Homodyne outcomes also contain the reference branch,
+    which ALWAYS passes the filter, so the raw kept fraction is
+    r = (1 + p)/2; this converts back to p = 2r - 1 (clamped at 0, since
+    shot noise can push the estimate slightly negative for tiny p).
+    """
+    r = float(np.mean((outcomes >> filter_bit) & 1 == 0))
+    return max(0.0, 2.0 * r - 1.0) if homodyne else r
+
+
 def read_frame(
     circuit: QuantumCircuit,
     mode: str = "exact",

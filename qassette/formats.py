@@ -62,7 +62,10 @@ def save_qbits(
 
     Bit layout per outcome: data bits [0, n), then the filter ancilla at
     bit n when filter_ancilla is set, then the homodyne ancilla on top.
-    success_rates records the per-frame post-selection success fraction.
+    success_rates records the per-frame PHYSICAL post-selection success
+    probability p, identical semantics for both readout modes — homodyne
+    writers must first remove the reference-branch contribution
+    (readout.success_rate does this: p = 2*raw_kept_fraction - 1).
     """
     if mode not in _SHOT_MODES:
         raise ValueError(f"mode must be one of {_SHOT_MODES}, got {mode!r}")
