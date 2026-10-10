@@ -52,6 +52,10 @@ qassette roundtrip samples\a_major_chord_2s.wav -o fx.wav --shots 65536 --fx "de
 qassette roundtrip samples\a_major_chord_2s.wav -o lp.wav --shots 65536 --fx "lowpass:8"
 qassette roundtrip samples\a_major_chord_2s.wav -o up.wav --shots 65536 --fx "fshift:8"
 
+# store each frame in a simulated mechanical quantum memory before readout
+# (T1/T2* from Bozkurt et al., Nat. Phys. 21, 1469 (2025)); echo pulses help
+qassette roundtrip samples\sine_440hz_2s.wav -o mem.wav --shots 4096 --memory-time 300us --dd hahn
+
 # measure in the frequency basis (right after the QFT) ...
 qassette measure song.qtape -o song_freq.qbits --shots 4096 --readout z --basis freq
 

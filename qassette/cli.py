@@ -21,6 +21,24 @@ app = typer.Typer(
 
 READOUTS = ("homodyne", "z")
 
+_TIME_UNITS = {"us": 1e-6, "ms": 1e-3, "s": 1.0}
+
+
+def _parse_memory(memory_time: str, dd: str, trajectories: int):
+    """'300us' / '1.5ms' / '0' -> MemoryParams or None."""
+    from .memory import MemoryParams
+
+    spec = memory_time.strip().lower()
+    if spec in ("", "0", "off", "none"):
+        return None
+    for unit, scale in _TIME_UNITS.items():
+        if spec.endswith(unit) and not (unit == "s" and spec.endswith(("us", "ms"))):
+            try:
+                return MemoryParams(t=float(spec[: -len(unit)]) * scale, dd=dd, trajectories=trajectories)
+            except ValueError as e:
+                raise typer.BadParameter(str(e)) from e
+    raise typer.BadParameter(f"memory time needs a us/ms/s suffix (got {memory_time!r})")
+
 
 def _check_readout(readout: str) -> str:
     if readout not in READOUTS:
@@ -71,6 +89,9 @@ def measure(
     readout: str = typer.Option("homodyne", help="homodyne (signed) or z (magnitudes)"),
     basis: str = typer.Option("time", help="time, or freq to measure right after the QFT"),
     seed: int = typer.Option(None, help="base RNG seed (frame i uses seed+i)"),
+    memory_time: str = typer.Option("0", "--memory-time", help="storage time, e.g. 300us / 1.5ms (0 = no memory)"),
+    dd: str = typer.Option("none", help="dynamical decoupling during storage: none|hahn|cpmg"),
+    trajectories: int = typer.Option(8, help="noise trajectories averaged per frame"),
 ) -> None:
     """Measure every frame of a .qtape into a .qbits file of raw shot outcomes."""
     _check_readout(readout)
@@ -78,6 +99,12 @@ def measure(
         raise typer.BadParameter("basis must be 'time' or 'freq'")
     if basis == "freq" and readout != "z":
         raise typer.BadParameter("basis='freq' requires readout='z'")
+    mem = _parse_memory(memory_time, dd, trajectories)
+    evaluator = None
+    if mem is not None:
+        from .memory import TapeEvaluator
+
+        evaluator = TapeEvaluator()
     t0 = time.perf_counter()
     tape = load_qtape(qtape)
     h = tape.header
@@ -89,7 +116,15 @@ def measure(
     ) as bar:
         for i, qc in bar:
             s = None if seed is None else seed + i
-            if readout == "homodyne":
+            if mem is not None:
+                from .memory import measure_with_memory
+
+                rows.append(
+                    measure_with_memory(
+                        qc, shots, readout, basis, nd, mem, np.random.default_rng(s), evaluator
+                    )
+                )
+            elif readout == "homodyne":
                 rows.append(sample_homodyne(qc, shots, seed=s, data_qubits=nd))
             else:
                 rows.append(sample_z(qc, shots, seed=s, basis=basis, data_qubits=nd))
@@ -100,14 +135,16 @@ def measure(
         output, np.stack(rows), sr=h["sr"], N=h["N"], hop=h["hop"], length=h["length"],
         mode=readout, shots=shots, norms=h["norms"], effects=h["effects"], basis=basis,
         filter_ancilla=filtered, success_rates=rates,
+        memory=None if mem is None else mem.header_dict(),
     )
     rate_note = "" if rates is None else (
         f", post-selection success avg {np.mean(rates):.1%} "
         f"(min {min(rates):.1%})"
     )
+    mem_note = "" if mem is None else f", memory {memory_time}/{mem.dd}/{mem.trajectories}traj"
     typer.echo(
         f"measure {qtape.name} -> {output} ({readout}/{basis}, {shots} shots/frame, "
-        f"{output.stat().st_size:,} bytes{rate_note}) in {time.perf_counter() - t0:.1f}s"
+        f"{output.stat().st_size:,} bytes{rate_note}{mem_note}) in {time.perf_counter() - t0:.1f}s"
     )
 
 
@@ -147,6 +184,9 @@ def roundtrip(
     seed: int = typer.Option(None, help="base RNG seed"),
     renormalize: bool = typer.Option(False, help="clamp frame estimates to unit norm"),
     fx: str = typer.Option("", "--fx", help='effect chain, e.g. "delay:3,chirp:0.5,ringmod:4"'),
+    memory_time: str = typer.Option("0", "--memory-time", help="storage time, e.g. 300us / 1.5ms (0 = no memory)"),
+    dd: str = typer.Option("none", help="dynamical decoupling during storage: none|hahn|cpmg"),
+    trajectories: int = typer.Option(8, help="noise trajectories averaged per frame"),
 ) -> None:
     """encode -> measure -> decode in one go, with fidelity metrics."""
     _check_readout(readout)
@@ -154,7 +194,8 @@ def roundtrip(
     qbits_path = output.with_suffix(".qbits")
     t0 = time.perf_counter()
     encode(in_wav=in_wav, output=qtape_path, n=256, hop=128, sr=16000, fx=fx)
-    measure(qtape=qtape_path, output=qbits_path, shots=shots, readout=readout, basis="time", seed=seed)
+    measure(qtape=qtape_path, output=qbits_path, shots=shots, readout=readout, basis="time",
+            seed=seed, memory_time=memory_time, dd=dd, trajectories=trajectories)
     decode(qbits=qbits_path, output=output, renormalize=renormalize)
     x = load_audio(in_wav, 16000)
     y = load_audio(output, 16000)

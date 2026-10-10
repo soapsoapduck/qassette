@@ -57,6 +57,7 @@ def save_qbits(
     basis: str = "time",
     filter_ancilla: bool = False,
     success_rates: list[float] | None = None,
+    memory: dict | None = None,
 ) -> None:
     """Write a .qbits tape. outcomes: (num_frames, shots) integer array.
 
@@ -103,6 +104,7 @@ def save_qbits(
         "effects": list(effects),
         "filter": bool(filter_ancilla),
         "success_rates": None if success_rates is None else [float(v) for v in success_rates],
+        "memory": memory,
         "crc32": zlib.crc32(packed.tobytes()),
     }
     with open(path, "wb") as f:
