@@ -107,8 +107,11 @@ def save_qbits(
         "memory": memory,
         "crc32": zlib.crc32(packed.tobytes()),
     }
-    with open(path, "wb") as f:
-        np.savez(f, header=json.dumps(header), outcomes=packed)
+    if hasattr(path, "write"):  # file-like (e.g. BytesIO for in-memory tapes)
+        np.savez(path, header=json.dumps(header), outcomes=packed)
+    else:
+        with open(path, "wb") as f:
+            np.savez(f, header=json.dumps(header), outcomes=packed)
 
 
 def load_qbits(path: str | Path) -> Qbits:
