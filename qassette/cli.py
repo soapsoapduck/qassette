@@ -11,7 +11,7 @@ from .decode import decode_qbits, frames_to_audio
 from .effects import build_fx_circuit, chain_names, parse_fx, uses_ancilla
 from .encode import encode_frame
 from .formats import FORMAT_VERSION, Qbits, load_qbits, load_qtape, save_qbits, save_qtape, to_ascii
-from .readout import read_exact, sample_homodyne, sample_z, success_rate
+from .readout import sample_homodyne, sample_z, success_rate
 
 app = typer.Typer(
     help="qassette: encode audio into quantum circuits, measure, and play back. Simulation only.",
@@ -234,8 +234,12 @@ def spectrogram(
                 sample_z(qc, shots, seed=None if seed is None else seed + i,
                          basis="freq", data_qubits=nd)
             )
-            a = read_exact(qc)
-            amps.append(a[: h["N"]])  # filtered circuits: keep the ancilla=0 block
+            from qiskit.quantum_info import Statevector
+
+            # real-quadrature (audible) part: safe for complex-state effects
+            # like ringmod, where read_exact would rightly refuse; filtered
+            # circuits keep only the ancilla=0 block
+            amps.append(Statevector(qc).data.real[: h["N"]])
     qb = Qbits(
         header={
             "version": FORMAT_VERSION, "sr": h["sr"], "N": h["N"], "hop": h["hop"],

@@ -15,19 +15,21 @@ hackathon (Oct 9–11, 2026).
 
 ```mermaid
 flowchart LR
-    W[".wav"] --> E["encode\namplitude encoding\n8 qubits / 256-sample frame"]
-    E --> F["QFT effects\ndelay · chirp · ringmod\nlowpass · highpass · fshift"]
-    F --> M["quantum memory\nT1/T2 noise + echo\n(none / hahn / cpmg)"]
-    M --> R["measure\nhomodyne or Z\nS shots per frame"]
-    R --> Q[".qbits\nraw 0/1 outcomes"]
-    Q --> D["decode\noverlap-add"] --> O[".wav"]
+    W[".wav"] --> E["encode<br/>amplitude encoding<br/>8 qubits / 256-sample frame"]
+    E --> F["QFT effects<br/>delay · chirp · ringmod<br/>lowpass · highpass · fshift"]
+    F --> M["quantum memory<br/>T1/T2 noise + echo<br/>(none / hahn / cpmg)"]
+    M --> R["measure<br/>homodyne or Z<br/>S shots per frame"]
+    R --> Q[".qbits<br/>raw 0/1 outcomes"]
+    Q --> D["decode<br/>overlap-add"] --> O[".wav"]
 ```
 
 ## How it's quantum
 
 Each claim below is backed by a reproducible ablation
 (`python scripts\render_demo.py`, fixed seeds → `outputs/demo/`, metrics in
-[`outputs/demo/ablations.md`](outputs/demo/ablations.md)):
+[`outputs/demo/ablations.md`](outputs/demo/ablations.md)). The eight key
+evidence WAVs ship in the repo so you can listen immediately; the full set
+regenerates bit-identically with the script:
 
 - **Superposition** — one 8-qubit state holds all 256 samples of a frame, so
   a handful of phase gates transforms the entire frame at once: the whole
@@ -69,7 +71,8 @@ echoes land at +14.7% / −14.3% of the paper values.
 ## Quickstart (Windows / PowerShell)
 
 ```powershell
-git clone <this-repo> qassette && cd qassette
+git clone <this-repo> qassette
+cd qassette
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt

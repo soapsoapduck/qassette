@@ -38,6 +38,23 @@ def test_quantum_spectrogram_rejects_time_basis(freq_qbits):
         quantum_spectrogram(bad)
 
 
+def test_cli_spectrogram_handles_complex_effect_tapes(tmp_path):
+    """Regression: ringmod produces a complex state; the spectrogram command
+    must render instead of crashing on read_exact's realness check."""
+    from qassette.cli import spectrogram
+    from qassette.effects import parse_fx
+    from qassette.formats import save_qtape
+
+    x = (0.9 * np.sin(2 * np.pi * 440 * np.arange(800) / 16000)).astype(np.float32)
+    encoded = encode_signal(x, N=256, hop=128, chain=parse_fx("ringmod:4", 8))
+    qt = tmp_path / "complex.qtape"
+    save_qtape(qt, [qc for qc, _ in encoded], sr=16000, N=256, hop=128,
+               length=len(x), norms=[n for _, n in encoded], effects=["ringmod:4"])
+    out = tmp_path / "spec.png"
+    spectrogram(qtape=qt, output=out, shots=256, seed=1)
+    assert out.stat().st_size > 10_000
+
+
 def test_spectrogram_comparison_saves(tmp_path, freq_qbits):
     qb, x, sr = freq_qbits
     fig = spectrogram_comparison(qb, x, sr)

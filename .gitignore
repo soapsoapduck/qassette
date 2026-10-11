@@ -10,4 +10,17 @@ dist/
 htmlcov/
 .ipynb_checkpoints/
 scratch/
-outputs/
+# outputs are build artifacts, except ablations.md and the hero demo WAVs
+# that the README and the app's evidence tab need in a fresh clone
+outputs/*
+!outputs/demo/
+outputs/demo/*
+!outputs/demo/ablations.md
+!outputs/demo/shots_1.wav
+!outputs/demo/shots_65536.wav
+!outputs/demo/readout_z.wav
+!outputs/demo/readout_homodyne.wav
+!outputs/demo/memory_0200us_none.wav
+!outputs/demo/memory_0200us_hahn.wav
+!outputs/demo/dephasing_coherent_hahn.wav
+!outputs/demo/dephasing_memoryless_hahn.wav
