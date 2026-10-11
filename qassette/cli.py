@@ -11,7 +11,7 @@ from .decode import decode_qbits, frames_to_audio
 from .effects import build_fx_circuit, chain_names, parse_fx, uses_ancilla
 from .encode import encode_frame
 from .formats import FORMAT_VERSION, Qbits, load_qbits, load_qtape, save_qbits, save_qtape, to_ascii
-from .readout import sample_homodyne, sample_z, success_rate
+from .readout import sample_z, success_rate
 
 app = typer.Typer(
     help="qassette: encode audio into quantum circuits, measure, and play back. Simulation only.",
@@ -100,11 +100,13 @@ def measure(
     if basis == "freq" and readout != "z":
         raise typer.BadParameter("basis='freq' requires readout='z'")
     mem = _parse_memory(memory_time, dd, trajectories)
-    evaluator = None
-    if mem is not None:
-        from .memory import TapeEvaluator
+    from .memory import MemoryParams, TapeEvaluator, measure_with_memory
 
-        evaluator = TapeEvaluator()
+    # Always sample via the operator-cached analytic path (same engine as
+    # the app): at t=0 it reproduces the circuit-sampling distributions
+    # exactly (tested to 1e-12), and it is ~50x faster per frame.
+    sampler = mem if mem is not None else MemoryParams(t=0.0, trajectories=1)
+    evaluator = TapeEvaluator()
     t0 = time.perf_counter()
     tape = load_qtape(qtape)
     h = tape.header
@@ -116,18 +118,11 @@ def measure(
     ) as bar:
         for i, qc in bar:
             s = None if seed is None else seed + i
-            if mem is not None:
-                from .memory import measure_with_memory
-
-                rows.append(
-                    measure_with_memory(
-                        qc, shots, readout, basis, nd, mem, np.random.default_rng(s), evaluator
-                    )
+            rows.append(
+                measure_with_memory(
+                    qc, shots, readout, basis, nd, sampler, np.random.default_rng(s), evaluator
                 )
-            elif readout == "homodyne":
-                rows.append(sample_homodyne(qc, shots, seed=s, data_qubits=nd))
-            else:
-                rows.append(sample_z(qc, shots, seed=s, basis=basis, data_qubits=nd))
+            )
     rates = None
     if filtered:
         rates = [success_rate(row, nd, homodyne=(readout == "homodyne")) for row in rows]
