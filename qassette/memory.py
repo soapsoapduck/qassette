@@ -17,12 +17,15 @@ Noise model (per data qubit, per stored frame):
   3t/4 (cpmg), modeled as sign flips of the accumulated phase per segment
   (pulse parity is compensated, i.e. pulses are treated as perfect).
 
-Calibration note: a SINGLE telegraph fluctuator cannot reproduce all
-three paper coherence times at once. The defaults (gamma_tls = 1780 /s,
-a_tls = 6494 rad/s) reproduce T2* = 64 us and T2_hahn ~ 571 us vs the
-562 us target, but give CPMG-2 ~ 790 us against the 1.02 ms target —
-the paper's noise is an ensemble of TLS, not one. Targets are recorded
-in the dataclass for reference.
+Calibration (scripts/calibrate.py, measured through this module): the
+defaults below put every 1/e time within +-15% of the paper —
+Ramsey 65.1 us (+1.7%), Hahn 645 us (+14.7%), CPMG-2 874 us (-14.3%),
+T1 24.9 ms (-0.2%). T2_star is the INPUT dephasing scale (66.98 us),
+tuned so the MEASURED Ramsey time lands on 64 us once the telegraph
+part is included. The symmetric +-14.x% echo split is the minimax
+solution: one telegraph fluctuator tops out at a CPMG-2/Hahn ratio of
+~1.38 (gamma_tls ~ 1/T2E), below the paper's 1.82 — real devices see a
+TLS ensemble. Paper targets are recorded in the dataclass fields.
 
 Trajectory averaging: each frame draws `trajectories` independent noise
 realizations; shots are sampled from the uniform mixture of the
@@ -97,11 +100,11 @@ class MemoryParams:
     dd: str = "none"
     trajectories: int = 8
     T1: float = 25e-3
-    T2_star: float = 64e-6
+    T2_star: float = 66.98e-6  # input scale; measured Ramsey 1/e = 64 us
     T2_hahn_target: float = 562e-6
     T2_cpmg2_target: float = 1.02e-3
-    gamma_tls: float = 1780.0
-    a_tls: float = 6494.0
+    gamma_tls: float = 1400.0
+    a_tls: float = 6241.0
     transfer_infidelity: float = 0.0  # per swap-in/out, per qubit
 
     def __post_init__(self):
