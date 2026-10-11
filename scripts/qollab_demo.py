@@ -9,7 +9,7 @@ statistics. This file is self-contained: it synthesizes its own audio,
 needs only numpy + qiskit, and runs on whatever is available:
 
   1. a pre-created `backend` variable (provided by hosted Qiskit runtimes)
-     - used for PART 1, one batched job of real measured circuits;
+     - used for PART 1, one real measured circuit = a single job;
   2. qiskit's built-in Statevector (exact simulation) for everything else.
 
 Full project (CLI, Streamlit app, QFT effects rack, paper-calibrated
@@ -91,28 +91,25 @@ def write_wav(name, y):
     print(f"  wrote {name} ({len(y) / SR:.2f}s) - download and listen")
 
 
-# ------------------- PART 1: real measured circuits, ONE batched job
+# -------------------- PART 1: a real measured circuit, ONE single job
 frame = frames[len(frames) // 2]
 psi = frame / np.linalg.norm(frame)
 SHOTS = 2048
 
 qc_h = homodyne_circuit(frame)
 qc_h.measure_all()
-qc_z = prep_circuit(frame)
-qc_z.measure_all()
 
 if backend is not None:
     name = getattr(backend, "name", lambda: "backend")
     print(f"PART 1 - measuring one frame on: {name() if callable(name) else name}")
-    tqcs = transpile([qc_h, qc_z], backend)
-    result = backend.run(tqcs, shots=SHOTS).result()  # single job
-    p_h = counts_to_probs(result.get_counts(0), NQ + 1)
-    p_z = counts_to_probs(result.get_counts(1), NQ)
+    tqc = transpile(qc_h, backend)
+    result = backend.run(tqc, shots=SHOTS).result()  # ONE circuit = ONE job
+    p_h = counts_to_probs(result.get_counts(), NQ + 1)
 else:
-    print("PART 1 - no hosted backend found; sampling exact statevectors")
-    sv_h, sv_z = Statevector(homodyne_circuit(frame)), Statevector(prep_circuit(frame))
-    p_h = counts_to_probs(sv_h.sample_counts(SHOTS), NQ + 1)
-    p_z = counts_to_probs(sv_z.sample_counts(SHOTS), NQ)
+    print("PART 1 - no hosted backend found; sampling the exact statevector")
+    p_h = counts_to_probs(Statevector(homodyne_circuit(frame)).sample_counts(SHOTS), NQ + 1)
+# the Z-readout comparison is illustrative: sampled from the exact state
+p_z = counts_to_probs(Statevector(prep_circuit(frame)).sample_counts(SHOTS), NQ)
 
 print("  16 shots from the measured histogram (ancilla | 8 data bits):")
 for o in rng.choice(2 ** (NQ + 1), size=16, p=p_h):
